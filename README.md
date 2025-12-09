@@ -53,4 +53,5 @@ fylins [path]
 - `H` - Toggle hidden files
 - `y` - Yank (copy) path to clipboard
 - `p` - Jump to path
+- `?` - Toggle help screen
 - `q` or `Esc` - Quit

@@ -22,3 +22,6 @@ target
 
 # AI-assisted code generation
 .claude/
+
+# Temporary files
+*.tmp*

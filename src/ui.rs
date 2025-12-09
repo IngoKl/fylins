@@ -177,7 +177,7 @@ fn render_header(path: &Path, mode: &Mode, input: &[char], cursor: usize) -> Par
                 "New Folder",
             )
         }
-        Mode::Normal | Mode::ConfirmDelete => (
+        Mode::Normal | Mode::ConfirmDelete | Mode::Help => (
             path.to_string_lossy().to_string(),
             Style::default().fg(Color::Cyan),
             "Path",
@@ -278,19 +278,71 @@ fn format_preview_title(ext: &str) -> String {
 
 fn render_help(mode: &Mode) -> Paragraph<'static> {
     let help_text = match mode {
-        Mode::Normal => {
-            "hjkl:Nav  /:Filter  H:Hidden  c/x/v:Copy/Cut/Paste  n/N:New  r:Rename  d:Del  q:Quit"
-        }
+        Mode::Normal => "hjkl:Nav  c/x/v:Copy/Cut/Paste  d:Del  n/N:New  q:Quit  ?:Help",
         Mode::Path => "Enter:Go  Esc:Cancel",
         Mode::Search => "Enter:Confirm  Esc:Cancel",
         Mode::Rename => "Enter:Confirm  Esc:Cancel",
         Mode::ConfirmDelete => "y:Delete  n:Cancel",
         Mode::NewFile | Mode::NewFolder => "Enter:Create  Esc:Cancel",
+        Mode::Help => "Press ? or Esc to close",
     };
 
     Paragraph::new(help_text)
         .style(Style::default().fg(Color::DarkGray))
         .block(Block::default().borders(Borders::ALL).title("Help"))
+}
+
+fn render_help_screen<'a>() -> Paragraph<'a> {
+    let help_content = vec![
+        "FYLINS - Terminal File Browser",
+        "",
+        "NAVIGATION:",
+        "  hjkl, ←↓↑→     Navigate files",
+        "  Enter, l, →    Open directory/file",
+        "  Backspace, h   Go to parent directory",
+        "  ` (backtick)   Go to start directory",
+        "  p              Jump to path",
+        "  PageUp/Down    Scroll preview",
+        "",
+        "FILE OPERATIONS:",
+        "  c              Copy file",
+        "  x              Cut file",
+        "  v              Paste file",
+        "  n              New file",
+        "  N              New folder",
+        "  r              Rename file/folder",
+        "  d              Delete file/folder",
+        "  o              Open with default app",
+        "  y              Yank (copy) path to clipboard",
+        "",
+        "FILTERING & VIEW:",
+        "  /              Search/filter files",
+        "  H              Toggle hidden files",
+        "",
+        "GIT STATUS INDICATORS:",
+        "  M (yellow)     Modified file",
+        "  S (green)      Staged file",
+        "  ? (red)        Untracked file",
+        "  ! (magenta)    Conflict",
+        "  I (gray)       Ignored file",
+        "",
+        "OTHER:",
+        "  ?              Toggle this help screen",
+        "  q, Esc         Quit",
+        "",
+        "Press ? or Esc to close this help",
+    ]
+    .join("\n");
+
+    Paragraph::new(help_content)
+        .style(Style::default().fg(Color::White))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Help")
+                .style(Style::default().fg(Color::Cyan)),
+        )
+        .wrap(Wrap { trim: false })
 }
 
 /// Renders the complete UI to the terminal frame.
@@ -336,16 +388,25 @@ pub fn draw_ui(f: &mut Frame, app: &mut App) {
 
     // Build widgets
     let header = render_header(&app.current_dir, &app.mode, &app.input[..], app.cursor);
-    let file_list = render_file_list_owned(&entry_data, app.show_hidden);
-    let preview = render_preview(&app.preview, app.scroll, preview_width);
-    let status = render_status_bar_data(&app.message, &app.mode, status_info.as_ref());
     let help = render_help(&app.mode);
 
-    f.render_widget(header, main_chunks[0]);
-    f.render_stateful_widget(file_list, content_chunks[0], &mut app.state);
-    f.render_widget(preview, content_chunks[1]);
-    f.render_widget(status, main_chunks[2]);
-    f.render_widget(help, main_chunks[3]);
+    // If in help mode, show help screen instead of file list and preview
+    if app.mode == Mode::Help {
+        let help_screen = render_help_screen();
+        f.render_widget(header, main_chunks[0]);
+        f.render_widget(help_screen, main_chunks[1]);
+        f.render_widget(help, main_chunks[3]);
+    } else {
+        let file_list = render_file_list_owned(&entry_data, app.show_hidden);
+        let preview = render_preview(&app.preview, app.scroll, preview_width);
+        let status = render_status_bar_data(&app.message, &app.mode, status_info.as_ref());
+
+        f.render_widget(header, main_chunks[0]);
+        f.render_stateful_widget(file_list, content_chunks[0], &mut app.state);
+        f.render_widget(preview, content_chunks[1]);
+        f.render_widget(status, main_chunks[2]);
+        f.render_widget(help, main_chunks[3]);
+    }
 }
 
 // Helper structs for owned data

@@ -32,6 +32,8 @@ pub enum Mode {
     NewFile,
     /// Creating a new folder.
     NewFolder,
+    /// Showing help screen.
+    Help,
 }
 
 /// Clipboard state for copy/cut operations.
@@ -812,6 +814,14 @@ impl App {
             self.input = name.chars().collect();
             self.cursor = self.input.len();
             self.message = None;
+        }
+    }
+
+    pub fn toggle_help(&mut self) {
+        if self.mode == Mode::Help {
+            self.mode = Mode::Normal;
+        } else {
+            self.mode = Mode::Help;
         }
     }
 

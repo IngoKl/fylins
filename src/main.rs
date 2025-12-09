@@ -131,6 +131,7 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) -> bool {
         KeyCode::Char('n') => app.start_new_file(),
         KeyCode::Char('N') => app.start_new_folder(),
         KeyCode::Char('`') => app.go_to_start(),
+        KeyCode::Char('?') => app.toggle_help(),
         _ => {}
     }
     true
@@ -207,6 +208,14 @@ fn handle_new_folder_mode(app: &mut App, key: event::KeyEvent) -> bool {
     true
 }
 
+fn handle_help_mode(app: &mut App, key: event::KeyEvent) -> bool {
+    match key.code {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('?') => app.toggle_help(),
+        _ => {}
+    }
+    true
+}
+
 fn handle_key_event(app: &mut App, key: event::KeyEvent) -> bool {
     if key.kind != KeyEventKind::Press {
         return true;
@@ -220,6 +229,7 @@ fn handle_key_event(app: &mut App, key: event::KeyEvent) -> bool {
         Mode::Path => handle_path_mode(app, key),
         Mode::NewFile => handle_new_file_mode(app, key),
         Mode::NewFolder => handle_new_folder_mode(app, key),
+        Mode::Help => handle_help_mode(app, key),
     }
 }
 
