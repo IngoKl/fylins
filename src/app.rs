@@ -1000,8 +1000,44 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+/// Remove Windows UNC prefix (\\?\) if present
+fn normalize_path(path: &Path) -> PathBuf {
+    let path_str = path.to_string_lossy();
+    if path_str.starts_with(r"\\?\") {
+        PathBuf::from(&path_str[4..])
+    } else {
+        path.to_path_buf()
+    }
+}
+
 fn get_git_status(dir: &Path) -> HashMap<String, GitStatus> {
     let mut statuses = HashMap::new();
+
+    // First, get the git root directory
+    let git_root_output = Command::new("git")
+        .args(["rev-parse", "--show-toplevel"])
+        .current_dir(dir)
+        .output();
+
+    let git_root = match git_root_output {
+        Ok(output) if output.status.success() => {
+            let root_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            // Normalize path separators (git on Windows may return forward slashes)
+            PathBuf::from(root_str.replace('/', std::path::MAIN_SEPARATOR_STR))
+        }
+        _ => return statuses, // Not a git repo or error
+    };
+
+    // Normalize both paths to remove UNC prefix (Windows \\?\ prefix)
+    let normalized_git_root = normalize_path(&git_root);
+    let normalized_dir = normalize_path(dir);
+
+    // Calculate the relative path from git root to current dir
+    let relative_prefix = match normalized_dir.strip_prefix(&normalized_git_root) {
+        Ok(rel) if rel.as_os_str().is_empty() => None,
+        Ok(rel) => Some(rel.to_path_buf()),
+        Err(_) => None,
+    };
 
     let output = Command::new("git")
         .args(["status", "--porcelain", "-uall"])
@@ -1026,8 +1062,31 @@ fn get_git_status(dir: &Path) -> HashMap<String, GitStatus> {
                     }
                 }
 
+                // Git outputs paths relative to repo root, so strip the prefix
+                // to make them relative to the current directory
+                // Normalize path separators first
+                let normalized_path = file_path.replace('/', std::path::MAIN_SEPARATOR_STR);
+
+                let relative_file_path = if let Some(ref prefix) = relative_prefix {
+                    // Use string manipulation for more reliable prefix stripping
+                    let prefix_str = prefix.to_string_lossy();
+                    let prefix_with_sep = if prefix_str.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{}{}", prefix_str, std::path::MAIN_SEPARATOR)
+                    };
+
+                    if normalized_path.starts_with(&prefix_with_sep) {
+                        normalized_path[prefix_with_sep.len()..].to_string()
+                    } else {
+                        normalized_path.clone()
+                    }
+                } else {
+                    normalized_path.clone()
+                };
+
                 // Track status by the top-level entry in the current directory
-                let entry_key = Path::new(file_path)
+                let entry_key = Path::new(&relative_file_path)
                     .components()
                     .next()
                     .and_then(|c| match c {

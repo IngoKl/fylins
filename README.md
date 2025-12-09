@@ -28,22 +28,29 @@ fylins [path]
 
 ## Keybindings
 
-| Key | Action |
-|-----|--------|
-| `j/k` | Navigate down/up |
-| `Enter/l` | Open directory |
-| `h/Backspace` | Go to parent |
-| `` ` `` | Go to start directory |
-| `/` | Search/filter |
-| `H` | Toggle hidden files |
-| `c` | Copy file |
-| `x` | Cut file |
-| `v` | Paste file |
-| `n` | New file |
-| `N` | New folder |
-| `y` | Yank (copy) path |
-| `r` | Rename |
-| `d` | Delete |
-| `o` | Open with default app |
-| `p` | Jump to path |
-| `q/Esc` | Quit |
+**Navigation:**
+
+- `h/j/k/l` or `←/↓/↑/→` - Navigate (vim-style)
+- `Enter` - Open directory/file
+- `Backspace` - Go to parent directory
+- `` ` `` - Go to start directory
+- `PageUp/PageDown` - Scroll preview
+
+**File Operations:**
+
+- `c` - Copy file
+- `x` - Cut file
+- `v` - Paste file
+- `n` - New file
+- `N` - New folder
+- `r` - Rename
+- `d` - Delete
+- `o` - Open with default app
+
+**Other:**
+
+- `/` - Search/filter
+- `H` - Toggle hidden files
+- `y` - Yank (copy) path to clipboard
+- `p` - Jump to path
+- `q` or `Esc` - Quit
