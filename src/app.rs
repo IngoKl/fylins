@@ -11,6 +11,91 @@ use arboard::Clipboard;
 use ratatui::widgets::ListState;
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Maximum bytes to read for file preview
+const MAX_PREVIEW_BYTES: usize = 16 * 1024;
+
+/// Number of bytes to sample when detecting text vs binary content
+const TEXT_DETECTION_SAMPLE_SIZE: usize = 512;
+
+/// Maximum percentage of non-text bytes allowed for a file to be considered text
+const TEXT_DETECTION_THRESHOLD_PERCENT: usize = 5;
+
+/// Minimum length for a valid git status line (2 status chars + space + filename)
+const GIT_STATUS_MIN_LINE_LENGTH: usize = 4;
+
+// =============================================================================
+// Sorting
+// =============================================================================
+
+/// Compares two entries for sorting: directories first, then alphabetically by lowercase name.
+fn compare_entries_by_dir_and_name<T, F>(a: &T, b: &T, is_dir: F, name_lower: impl Fn(&T) -> &str) -> std::cmp::Ordering
+where
+    F: Fn(&T) -> bool,
+{
+    match (is_dir(a), is_dir(b)) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => name_lower(a).cmp(name_lower(b)),
+    }
+}
+
+/// Validates a file or folder name for creation/renaming.
+/// Returns Ok(()) if valid, or Err with a user-friendly message if invalid.
+fn validate_filename(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("Name cannot be empty".to_string());
+    }
+
+    // Check for path separators
+    if name.contains('/') || name.contains('\\') {
+        return Err("Name cannot contain path separators (/ or \\)".to_string());
+    }
+
+    // Check for null bytes
+    if name.contains('\0') {
+        return Err("Name cannot contain null characters".to_string());
+    }
+
+    // Windows-specific invalid characters
+    #[cfg(windows)]
+    {
+        const INVALID_CHARS: &[char] = &['<', '>', ':', '"', '|', '?', '*'];
+        for c in INVALID_CHARS {
+            if name.contains(*c) {
+                return Err(format!("Name cannot contain '{}'", c));
+            }
+        }
+
+        // Check for control characters (0x00-0x1F)
+        if name.chars().any(|c| c as u32 <= 0x1F) {
+            return Err("Name cannot contain control characters".to_string());
+        }
+
+        // Check for reserved Windows names
+        let name_upper = name.to_uppercase();
+        let base_name = name_upper.split('.').next().unwrap_or("");
+        const RESERVED: &[&str] = &[
+            "CON", "PRN", "AUX", "NUL",
+            "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+            "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+        ];
+        if RESERVED.contains(&base_name) {
+            return Err(format!("'{}' is a reserved name on Windows", base_name));
+        }
+
+        // Check for trailing spaces or dots (problematic on Windows)
+        if name.ends_with(' ') || name.ends_with('.') {
+            return Err("Name cannot end with a space or dot".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+// =============================================================================
 // Data Types
 // =============================================================================
 
@@ -197,11 +282,9 @@ impl App {
             })
             .collect();
 
-        // Sort using pre-computed lowercase names to avoid repeated allocations
-        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name_lower.cmp(&b.name_lower),
+        // Sort: directories first, then alphabetically by lowercase name
+        entries.sort_by(|a, b| {
+            compare_entries_by_dir_and_name(a, b, |e| e.is_dir, |e| &e.name_lower)
         });
 
         self.all_entries.extend(entries);
@@ -255,11 +338,11 @@ impl App {
     }
 
     pub fn selected_path(&self) -> Option<PathBuf> {
-        self.selected_entry().map(|e| {
+        self.selected_entry().and_then(|e| {
             if e.name == ".." {
-                self.current_dir.parent().unwrap().to_path_buf()
+                self.current_dir.parent().map(|p| p.to_path_buf())
             } else {
-                self.current_dir.join(&e.name)
+                Some(self.current_dir.join(&e.name))
             }
         })
     }
@@ -320,10 +403,9 @@ impl App {
                     })
                     .collect();
 
-                items.sort_by(|a, b| match (a.0, b.0) {
-                    (true, false) => std::cmp::Ordering::Less,
-                    (false, true) => std::cmp::Ordering::Greater,
-                    _ => a.2.cmp(&b.2),
+                // Sort: directories first, then alphabetically by lowercase name
+                items.sort_by(|a, b| {
+                    compare_entries_by_dir_and_name(a, b, |e| e.0, |e| &e.2)
                 });
 
                 let formatted: Vec<String> = items
@@ -358,7 +440,7 @@ impl App {
             return self.load_image_preview(path, &extension);
         }
 
-        const MAX_PREVIEW: usize = 16 * 1024;
+        const MAX_PREVIEW: usize = MAX_PREVIEW_BYTES;
 
         let mut file = match fs::File::open(path) {
             Ok(f) => f,
@@ -423,7 +505,10 @@ impl App {
         if let Some(entry) = self.selected_entry() {
             if entry.is_dir {
                 let new_path = if entry.name == ".." {
-                    self.current_dir.parent().unwrap().to_path_buf()
+                    match self.current_dir.parent() {
+                        Some(p) => p.to_path_buf(),
+                        None => return Ok(()), // Already at root
+                    }
                 } else {
                     self.current_dir.join(&entry.name)
                 };
@@ -733,8 +818,8 @@ impl App {
 
     pub fn confirm_new_file(&mut self) {
         let name: String = self.input.iter().collect();
-        if name.is_empty() {
-            self.message = Some("Name cannot be empty".to_string());
+        if let Err(msg) = validate_filename(&name) {
+            self.message = Some(msg);
             return;
         }
 
@@ -762,8 +847,8 @@ impl App {
 
     pub fn confirm_new_folder(&mut self) {
         let name: String = self.input.iter().collect();
-        if name.is_empty() {
-            self.message = Some("Name cannot be empty".to_string());
+        if let Err(msg) = validate_filename(&name) {
+            self.message = Some(msg);
             return;
         }
 
@@ -872,8 +957,8 @@ impl App {
             let old_path = self.current_dir.join(&entry.name);
             let new_path = self.current_dir.join(&new_name);
 
-            if new_name.is_empty() {
-                self.message = Some("Name cannot be empty".to_string());
+            if let Err(msg) = validate_filename(&new_name) {
+                self.message = Some(msg);
                 return;
             }
 
@@ -960,13 +1045,14 @@ fn is_text(data: &[u8]) -> bool {
         return true;
     }
 
+    let sample_size = data.len().min(TEXT_DETECTION_SAMPLE_SIZE);
     let non_text_count = data
         .iter()
-        .take(512)
+        .take(sample_size)
         .filter(|&&b| b < 0x09 || (b > 0x0D && b < 0x20 && b != 0x1B))
         .count();
 
-    non_text_count * 100 / data.len().min(512) < 5
+    non_text_count * 100 / sample_size < TEXT_DETECTION_THRESHOLD_PERCENT
 }
 
 #[cfg(windows)]
@@ -992,36 +1078,58 @@ fn is_hidden_file(name: &str, _path: &Path) -> bool {
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
-    fs::create_dir(dst)?;
-    for entry in fs::read_dir(src)? {
-        let entry = entry?;
-        let src_path = entry.path();
-        let dst_path = dst.join(entry.file_name());
-        let metadata = fs::symlink_metadata(&src_path)?;
+    use std::collections::HashSet;
 
-        if metadata.file_type().is_symlink() {
-            let target_meta = fs::metadata(&src_path)?;
-            if target_meta.is_dir() {
-                return Err(io::Error::new(
-                    ErrorKind::Other,
-                    format!(
-                        "Refusing to copy symlinked directory: {}",
-                        src_path.display()
-                    ),
-                ));
+    fn copy_dir_inner(
+        src: &Path,
+        dst: &Path,
+        visited: &mut HashSet<PathBuf>,
+    ) -> io::Result<()> {
+        // Canonicalize to detect cycles (resolves symlinks)
+        let canonical_src = src.canonicalize().unwrap_or_else(|_| src.to_path_buf());
+
+        if !visited.insert(canonical_src.clone()) {
+            return Err(io::Error::new(
+                ErrorKind::Other,
+                format!("Symlink cycle detected: {}", src.display()),
+            ));
+        }
+
+        fs::create_dir(dst)?;
+
+        for entry in fs::read_dir(src)? {
+            let entry = entry?;
+            let src_path = entry.path();
+            let dst_path = dst.join(entry.file_name());
+            let metadata = fs::symlink_metadata(&src_path)?;
+
+            if metadata.file_type().is_symlink() {
+                let target_meta = fs::metadata(&src_path)?;
+                if target_meta.is_dir() {
+                    return Err(io::Error::new(
+                        ErrorKind::Other,
+                        format!(
+                            "Refusing to copy symlinked directory: {}",
+                            src_path.display()
+                        ),
+                    ));
+                }
+
+                fs::copy(&src_path, &dst_path)?;
+                continue;
             }
 
-            fs::copy(&src_path, &dst_path)?;
-            continue;
+            if metadata.is_dir() {
+                copy_dir_inner(&src_path, &dst_path, visited)?;
+            } else {
+                fs::copy(&src_path, &dst_path)?;
+            }
         }
-
-        if metadata.is_dir() {
-            copy_dir_recursive(&src_path, &dst_path)?;
-        } else {
-            fs::copy(&src_path, &dst_path)?;
-        }
+        Ok(())
     }
-    Ok(())
+
+    let mut visited = HashSet::new();
+    copy_dir_inner(src, dst, &mut visited)
 }
 
 /// Remove Windows UNC prefix (\\?\) if present
@@ -1072,7 +1180,7 @@ fn get_git_status(dir: &Path) -> HashMap<String, GitStatus> {
         if output.status.success() {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
-                if line.len() < 4 {
+                if line.len() < GIT_STATUS_MIN_LINE_LENGTH {
                     continue;
                 }
                 let status_chars = &line[0..2];
@@ -1314,6 +1422,58 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_filename_valid() {
+        assert!(validate_filename("test.txt").is_ok());
+        assert!(validate_filename("my-file_123").is_ok());
+        assert!(validate_filename(".hidden").is_ok());
+    }
+
+    #[test]
+    fn test_validate_filename_empty() {
+        assert!(validate_filename("").is_err());
+    }
+
+    #[test]
+    fn test_validate_filename_path_separators() {
+        assert!(validate_filename("path/to/file").is_err());
+        assert!(validate_filename("path\\to\\file").is_err());
+    }
+
+    #[test]
+    fn test_validate_filename_null_char() {
+        assert!(validate_filename("file\0name").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_validate_filename_windows_invalid_chars() {
+        assert!(validate_filename("file<name").is_err());
+        assert!(validate_filename("file>name").is_err());
+        assert!(validate_filename("file:name").is_err());
+        assert!(validate_filename("file\"name").is_err());
+        assert!(validate_filename("file|name").is_err());
+        assert!(validate_filename("file?name").is_err());
+        assert!(validate_filename("file*name").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_validate_filename_windows_reserved() {
+        assert!(validate_filename("CON").is_err());
+        assert!(validate_filename("con").is_err());
+        assert!(validate_filename("PRN.txt").is_err());
+        assert!(validate_filename("COM1").is_err());
+        assert!(validate_filename("LPT9").is_err());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_validate_filename_windows_trailing() {
+        assert!(validate_filename("file ").is_err());
+        assert!(validate_filename("file.").is_err());
+    }
+
+    #[test]
     fn test_entry_sorting() {
         let mut entries = vec![
             Entry {
@@ -1348,10 +1508,8 @@ mod tests {
             },
         ];
 
-        entries.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name_lower.cmp(&b.name_lower),
+        entries.sort_by(|a, b| {
+            compare_entries_by_dir_and_name(a, b, |e| e.is_dir, |e| &e.name_lower)
         });
 
         assert_eq!(entries[0].name, "alpha");

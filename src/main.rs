@@ -259,7 +259,9 @@ fn main() -> io::Result<()> {
     let start_dir = env::args()
         .nth(1)
         .map(PathBuf::from)
-        .unwrap_or_else(|| env::current_dir().unwrap());
+        .or_else(|| env::current_dir().ok())
+        .or_else(|| dirs_next::home_dir())
+        .unwrap_or_else(|| PathBuf::from("."));
 
     let mut terminal = setup_terminal()?;
     let mut app = App::new(start_dir)?;

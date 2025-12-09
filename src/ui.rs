@@ -11,6 +11,16 @@ use crate::app::{App, GitStatus, Mode, Preview};
 use crate::highlight::highlight_code;
 
 // =============================================================================
+// Constants
+// =============================================================================
+
+/// Minimum bytes per line in hex dump display
+const HEX_DUMP_MIN_BYTES_PER_LINE: usize = 8;
+
+/// Maximum bytes per line in hex dump display
+const HEX_DUMP_MAX_BYTES_PER_LINE: usize = 16;
+
+// =============================================================================
 // Theme
 // =============================================================================
 
@@ -76,7 +86,7 @@ pub fn format_size(size: u64) -> String {
 /// Formats binary data as a hex dump with ASCII representation.
 pub fn format_hex(data: &[u8], width: usize) -> String {
     let bytes_per_line = (width.saturating_sub(12)) / 4;
-    let bytes_per_line = bytes_per_line.clamp(8, 16);
+    let bytes_per_line = bytes_per_line.clamp(HEX_DUMP_MIN_BYTES_PER_LINE, HEX_DUMP_MAX_BYTES_PER_LINE);
 
     data.chunks(bytes_per_line)
         .enumerate()
