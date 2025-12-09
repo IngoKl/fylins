@@ -2,6 +2,8 @@
 
 A very basic but fast terminal file browser.
 
+![Fylins screenshot](docs/media/screenshot-1.png)
+
 ## Features
 
 - Vim-style navigation (j/k/h/l)
