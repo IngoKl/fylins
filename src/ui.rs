@@ -11,6 +11,48 @@ use crate::app::{App, GitStatus, Mode, Preview};
 use crate::highlight::highlight_code;
 
 // =============================================================================
+// Theme
+// =============================================================================
+
+#[derive(Clone, Copy)]
+struct Theme {
+    accent: Color,
+    accent_alt: Color,
+    surface_alt: Color,
+    muted: Color,
+    text: Color,
+    selection: Color,
+    warning: Color,
+}
+
+const THEME: Theme = Theme {
+    accent: Color::Cyan,
+    accent_alt: Color::Magenta,
+    surface_alt: Color::Rgb(24, 26, 32),
+    muted: Color::DarkGray,
+    text: Color::White,
+    selection: Color::Rgb(40, 44, 52),
+    warning: Color::Yellow,
+};
+
+fn themed_block(title: impl Into<String>, accent: Color) -> Block<'static> {
+    Block::default()
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .title(Span::styled(
+            title.into(),
+            Style::default().fg(accent).add_modifier(Modifier::BOLD),
+        ))
+}
+
+fn badge(text: impl Into<String>, fg: Color, bg: Color) -> Span<'static> {
+    Span::styled(
+        format!(" {} ", text.into()),
+        Style::default().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
+    )
+}
+
+// =============================================================================
 // Formatting Helpers
 // =============================================================================
 
@@ -134,78 +176,67 @@ fn is_leap_year(year: u64) -> bool {
 // =============================================================================
 
 fn render_header(path: &Path, mode: &Mode, input: &[char], cursor: usize) -> Paragraph<'static> {
+    let theme = THEME;
     let input_str: String = input.iter().collect();
-    let (content, style, title) = match mode {
-        Mode::Search => (
-            format!("🔍 {}", input_str),
-            Style::default().fg(Color::Yellow),
-            "Search",
-        ),
+    let (content, accent, label) = match mode {
+        Mode::Search => (format!("> {}", input_str), Color::Yellow, "Search"),
         Mode::Rename => {
             let before: String = input.iter().take(cursor).collect();
             let after: String = input.iter().skip(cursor).collect();
-            (
-                format!("{}│{}", before, after),
-                Style::default().fg(Color::Green),
-                "Rename",
-            )
+            (format!("{}|{}", before, after), Color::Green, "Rename")
         }
         Mode::Path => {
             let before: String = input.iter().take(cursor).collect();
             let after: String = input.iter().skip(cursor).collect();
-            (
-                format!("{}│{}", before, after),
-                Style::default().fg(Color::Magenta),
-                "Path",
-            )
+            (format!("{}|{}", before, after), Color::Magenta, "Path")
         }
         Mode::NewFile => {
             let before: String = input.iter().take(cursor).collect();
             let after: String = input.iter().skip(cursor).collect();
-            (
-                format!("{}│{}", before, after),
-                Style::default().fg(Color::Green),
-                "New File",
-            )
+            (format!("{}|{}", before, after), Color::Green, "New File")
         }
         Mode::NewFolder => {
             let before: String = input.iter().take(cursor).collect();
             let after: String = input.iter().skip(cursor).collect();
-            (
-                format!("{}│{}", before, after),
-                Style::default().fg(Color::Blue),
-                "New Folder",
-            )
+            (format!("{}|{}", before, after), Color::Blue, "New Folder")
         }
-        Mode::Normal | Mode::ConfirmDelete | Mode::Help => (
+        Mode::ConfirmDelete => (
             path.to_string_lossy().to_string(),
-            Style::default().fg(Color::Cyan),
-            "Path",
+            Color::Red,
+            "Confirm Delete",
         ),
+        Mode::Normal | Mode::Help => (path.to_string_lossy().to_string(), theme.accent, "Path"),
     };
 
-    Paragraph::new(content)
-        .style(style)
-        .block(Block::default().borders(Borders::ALL).title(title))
+    let spans = vec![
+        badge("fylins", Color::Black, theme.accent),
+        Span::raw(" "),
+        badge(label, Color::Black, accent),
+        Span::raw("  "),
+        Span::styled(content, Style::default().fg(theme.text)),
+    ];
+
+    Paragraph::new(Line::from(spans))
+        .style(Style::default().fg(theme.text).bg(theme.surface_alt))
+        .block(themed_block("Path", accent))
 }
 
-fn render_preview<'a>(preview: &Preview, scroll: u16, width: usize) -> Paragraph<'a> {
+fn render_preview(preview: &Preview, scroll: u16, width: usize) -> Paragraph<'static> {
+    let theme = THEME;
     match preview {
-        Preview::None => {
-            Paragraph::new("").block(Block::default().borders(Borders::ALL).title("Preview"))
-        }
+        Preview::None => Paragraph::new("Select something to preview")
+            .style(Style::default().fg(theme.muted))
+            .block(themed_block("Preview", theme.accent))
+            .wrap(Wrap { trim: false }),
         Preview::Directory(items) => {
             let content = if items.is_empty() {
-                "(empty directory)".to_string()
+                "[ empty directory ]".to_string()
             } else {
                 items.join("\n")
             };
             Paragraph::new(content)
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Preview (Directory)"),
-                )
+                .style(Style::default().fg(theme.text))
+                .block(themed_block("Preview (Directory)", theme.accent_alt))
                 .wrap(Wrap { trim: false })
                 .scroll((scroll, 0))
         }
@@ -213,7 +244,8 @@ fn render_preview<'a>(preview: &Preview, scroll: u16, width: usize) -> Paragraph
             let title = format_preview_title(extension);
             let lines = highlight_code(content, extension);
             Paragraph::new(lines)
-                .block(Block::default().borders(Borders::ALL).title(title))
+                .style(Style::default().fg(theme.text))
+                .block(themed_block(title, theme.accent))
                 .wrap(Wrap { trim: false })
                 .scroll((scroll, 0))
         }
@@ -227,25 +259,17 @@ fn render_preview<'a>(preview: &Preview, scroll: u16, width: usize) -> Paragraph
                 format, width, height
             );
             Paragraph::new(content)
-                .style(Style::default().fg(Color::Cyan))
-                .block(
-                    Block::default()
-                        .borders(Borders::ALL)
-                        .title("Preview (Image)"),
-                )
+                .style(Style::default().fg(theme.accent))
+                .block(themed_block("Preview (Image)", theme.accent_alt))
         }
         Preview::Binary(data) => Paragraph::new(format_hex(data, width))
-            .style(Style::default().fg(Color::Yellow))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Preview (Hex)"),
-            )
+            .style(Style::default().fg(theme.warning))
+            .block(themed_block("Preview (Hex)", theme.accent_alt))
             .wrap(Wrap { trim: false })
             .scroll((scroll, 0)),
         Preview::Error(msg) => Paragraph::new(msg.clone())
             .style(Style::default().fg(Color::Red))
-            .block(Block::default().borders(Borders::ALL).title("Preview")),
+            .block(themed_block("Preview", Color::Red)),
     }
 }
 
@@ -276,72 +300,149 @@ fn format_preview_title(ext: &str) -> String {
     format!("Preview ({})", lang)
 }
 
+fn help_row(key: &str, desc: &str, theme: &Theme) -> Line<'static> {
+    Line::from(vec![
+        badge(key, Color::Black, theme.accent),
+        Span::raw(" "),
+        Span::styled(desc.to_string(), Style::default().fg(theme.text)),
+    ])
+}
+
+fn push_help_section(
+    lines: &mut Vec<Line<'static>>,
+    title: &str,
+    rows: &[(&str, &str)],
+    theme: &Theme,
+) {
+    lines.push(Line::from(vec![Span::styled(
+        title.to_string(),
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    )]));
+    for (key, desc) in rows {
+        lines.push(help_row(key, desc, theme));
+    }
+    lines.push(Line::from(""));
+}
+
 fn render_help(mode: &Mode) -> Paragraph<'static> {
-    let help_text = match mode {
-        Mode::Normal => "hjkl:Nav  c/x/v:Copy/Cut/Paste  d:Del  n/N:New  q:Quit  ?:Help",
-        Mode::Path => "Enter:Go  Esc:Cancel",
-        Mode::Search => "Enter:Confirm  Esc:Cancel",
-        Mode::Rename => "Enter:Confirm  Esc:Cancel",
-        Mode::ConfirmDelete => "y:Delete  n:Cancel",
-        Mode::NewFile | Mode::NewFolder => "Enter:Create  Esc:Cancel",
-        Mode::Help => "Press ? or Esc to close",
+    let theme = THEME;
+    let hints: Vec<(&str, &str)> = match mode {
+        Mode::Normal => vec![
+            ("hjkl", "move"),
+            ("c/x/v", "copy/cut/paste"),
+            ("d", "delete"),
+            ("n/N", "new"),
+            ("q", "quit"),
+            ("?", "help"),
+        ],
+        Mode::Path => vec![("Enter", "go"), ("Esc", "cancel")],
+        Mode::Search => vec![("Enter", "confirm"), ("Esc", "cancel")],
+        Mode::Rename => vec![("Enter", "confirm"), ("Esc", "cancel")],
+        Mode::ConfirmDelete => vec![("y", "delete"), ("n/Esc", "cancel")],
+        Mode::NewFile | Mode::NewFolder => vec![("Enter", "create"), ("Esc", "cancel")],
+        Mode::Help => vec![("?", "close"), ("Esc", "close")],
     };
 
-    Paragraph::new(help_text)
-        .style(Style::default().fg(Color::DarkGray))
-        .block(Block::default().borders(Borders::ALL).title("Help"))
+    let mut spans: Vec<Span> = Vec::new();
+    for (i, (key, desc)) in hints.iter().enumerate() {
+        spans.push(badge(*key, Color::Black, theme.accent));
+        spans.push(Span::styled(
+            format!(" {}", desc),
+            Style::default().fg(theme.text),
+        ));
+        if i != hints.len() - 1 {
+            spans.push(Span::raw("  "));
+        }
+    }
+
+    Paragraph::new(Line::from(spans))
+        .style(Style::default().fg(theme.muted))
+        .block(themed_block("Help", theme.accent))
 }
 
 fn render_help_screen<'a>() -> Paragraph<'a> {
-    let help_content = vec![
-        "FYLINS - Terminal File Browser",
-        "",
-        "NAVIGATION:",
-        "  hjkl, ←↓↑→     Navigate files",
-        "  Enter, l, →    Open directory/file",
-        "  Backspace, h   Go to parent directory",
-        "  ` (backtick)   Go to start directory",
-        "  p              Jump to path",
-        "  PageUp/Down    Scroll preview",
-        "",
-        "FILE OPERATIONS:",
-        "  c              Copy file",
-        "  x              Cut file",
-        "  v              Paste file",
-        "  n              New file",
-        "  N              New folder",
-        "  r              Rename file/folder",
-        "  d              Delete file/folder",
-        "  o              Open with default app",
-        "  y              Yank (copy) path to clipboard",
-        "",
-        "FILTERING & VIEW:",
-        "  /              Search/filter files",
-        "  H              Toggle hidden files",
-        "",
-        "GIT STATUS INDICATORS:",
-        "  M (yellow)     Modified file",
-        "  S (green)      Staged file",
-        "  ? (red)        Untracked file",
-        "  ! (magenta)    Conflict",
-        "  I (gray)       Ignored file",
-        "",
-        "OTHER:",
-        "  ?              Toggle this help screen",
-        "  q, Esc         Quit",
-        "",
-        "Press ? or Esc to close this help",
-    ]
-    .join("\n");
+    let theme = THEME;
+    let mut lines: Vec<Line<'static>> = Vec::new();
 
-    Paragraph::new(help_content)
-        .style(Style::default().fg(Color::White))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Help")
-                .style(Style::default().fg(Color::Cyan)),
-        )
+    lines.push(Line::from(vec![
+        Span::styled(
+            "FYLINS",
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  Terminal file browser", Style::default().fg(theme.muted)),
+    ]));
+    lines.push(Line::from(""));
+
+    push_help_section(
+        &mut lines,
+        "Navigation",
+        &[
+            ("j/k or up/down", "Move selection"),
+            ("l or Enter", "Open or enter"),
+            ("h or Backspace", "Parent directory"),
+            ("`", "Go to start directory"),
+            ("PgUp/PgDn", "Scroll preview"),
+        ],
+        &theme,
+    );
+
+    push_help_section(
+        &mut lines,
+        "File actions",
+        &[
+            ("c / x / v", "Copy / Cut / Paste"),
+            ("n / N", "New file / folder"),
+            ("r", "Rename"),
+            ("d", "Delete"),
+            ("o", "Open with default app"),
+            ("y", "Copy path to clipboard"),
+        ],
+        &theme,
+    );
+
+    push_help_section(
+        &mut lines,
+        "View & filter",
+        &[
+            ("/", "Search or filter"),
+            ("H", "Toggle hidden files"),
+            ("p", "Jump to path"),
+        ],
+        &theme,
+    );
+
+    push_help_section(
+        &mut lines,
+        "Git status",
+        &[
+            ("M", "Modified"),
+            ("S", "Staged"),
+            ("?", "Untracked"),
+            ("!", "Conflict"),
+            ("I", "Ignored"),
+        ],
+        &theme,
+    );
+
+    push_help_section(
+        &mut lines,
+        "Other",
+        &[("?", "Toggle help"), ("q or Esc", "Quit")],
+        &theme,
+    );
+
+    lines.push(Line::from(vec![Span::styled(
+        "Press ? or Esc to close this help",
+        Style::default().fg(theme.muted),
+    )]));
+
+    Paragraph::new(lines)
+        .style(Style::default().fg(theme.text))
+        .block(themed_block("Help", theme.accent))
         .wrap(Wrap { trim: false })
 }
 
@@ -428,49 +529,51 @@ struct StatusInfo {
 }
 
 fn render_file_list_owned(entries: &[EntryDisplay], show_hidden: bool) -> List<'static> {
+    let theme = THEME;
     let items: Vec<ListItem> = entries
         .iter()
         .map(|entry| {
-            let (icon, style) = if entry.is_dir {
-                (
-                    "📁 ",
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                )
+            let icon = if entry.is_dir {
+                Span::styled("> ", Style::default().fg(theme.accent))
             } else {
-                ("📄 ", Style::default().fg(Color::White))
+                Span::styled("- ", Style::default().fg(theme.muted))
             };
 
-            let size_str = if entry.is_dir || entry.name == ".." {
-                String::new()
+            let base_style = if entry.is_dir {
+                Style::default().fg(theme.text).add_modifier(Modifier::BOLD)
             } else {
-                format!(" {}", format_size(entry.size))
+                Style::default().fg(theme.text)
             };
 
             let name_style = if entry.is_hidden {
-                style.add_modifier(Modifier::DIM)
+                base_style.add_modifier(Modifier::DIM)
             } else {
-                style
+                base_style
             };
 
-            // Git status indicator
-            let (git_indicator, git_style) = match entry.git_status {
-                Some(GitStatus::Modified) => (" M", Style::default().fg(Color::Yellow)),
-                Some(GitStatus::Staged) => (" S", Style::default().fg(Color::Green)),
-                Some(GitStatus::Untracked) => (" ?", Style::default().fg(Color::Red)),
-                Some(GitStatus::Conflict) => (" !", Style::default().fg(Color::Magenta)),
-                Some(GitStatus::Ignored) => (" I", Style::default().fg(Color::DarkGray)),
-                None => ("", Style::default()),
+            let git_indicator = match entry.git_status {
+                Some(GitStatus::Modified) => Some(badge("M", Color::Black, Color::Yellow)),
+                Some(GitStatus::Staged) => Some(badge("S", Color::Black, Color::Green)),
+                Some(GitStatus::Untracked) => Some(badge("?", Color::Black, Color::Red)),
+                Some(GitStatus::Conflict) => Some(badge("!", Color::Black, Color::Magenta)),
+                Some(GitStatus::Ignored) => Some(badge("I", Color::Black, Color::DarkGray)),
+                None => None,
             };
 
-            let content = Line::from(vec![
-                Span::raw(icon),
-                Span::styled(entry.name.clone(), name_style),
-                Span::styled(git_indicator, git_style),
-                Span::styled(size_str, Style::default().fg(Color::DarkGray)),
-            ]);
-            ListItem::new(content)
+            let mut spans = vec![icon, Span::styled(entry.name.clone(), name_style)];
+            if let Some(badge) = git_indicator {
+                spans.push(Span::raw(" "));
+                spans.push(badge);
+            }
+            if !entry.is_dir && entry.name != ".." {
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled(
+                    format!("{:>7}", format_size(entry.size)),
+                    Style::default().fg(theme.muted),
+                ));
+            }
+
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -481,13 +584,14 @@ fn render_file_list_owned(entries: &[EntryDisplay], show_hidden: bool) -> List<'
     };
 
     List::new(items)
-        .block(Block::default().borders(Borders::ALL).title(title))
+        .block(themed_block(title, theme.accent))
         .highlight_style(
             Style::default()
-                .bg(Color::DarkGray)
+                .bg(theme.selection)
+                .fg(theme.text)
                 .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("▶ ")
+        .highlight_symbol("> ")
 }
 
 fn render_status_bar_data(
@@ -495,43 +599,69 @@ fn render_status_bar_data(
     mode: &Mode,
     entry: Option<&StatusInfo>,
 ) -> Paragraph<'static> {
+    let theme = THEME;
+
     if let Some(msg) = message {
-        let style = if *mode == Mode::ConfirmDelete {
-            Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)
+        let is_delete = *mode == Mode::ConfirmDelete;
+        let status_badge = if is_delete {
+            badge(msg.clone(), Color::White, Color::Red)
         } else {
-            Style::default().fg(Color::Yellow)
+            badge(msg.clone(), Color::Black, theme.warning)
         };
-        return Paragraph::new(msg.clone())
-            .style(style)
-            .block(Block::default().borders(Borders::ALL).title("Status"));
+        let accent = if is_delete { Color::Red } else { theme.accent };
+        return Paragraph::new(Line::from(vec![status_badge]))
+            .block(themed_block("Status", accent));
     }
 
-    let content = if let Some(e) = entry {
-        if e.name == ".." {
-            "Parent directory".to_string()
-        } else {
-            let type_str = if e.is_dir { "DIR" } else { "FILE" };
-            let size_str = if e.is_dir {
-                String::new()
-            } else {
-                format!(" │ {}", format_size(e.size))
-            };
-            let time_str = format_time(e.modified);
-            let perm_str = if e.readonly { " │ RO" } else { " │ RW" };
-            let hidden_str = if e.is_hidden { " │ hidden" } else { "" };
+    let mut spans: Vec<Span> = Vec::new();
 
-            format!(
-                "{}{} │ {}{}{}",
-                type_str, size_str, time_str, perm_str, hidden_str
-            )
+    if let Some(e) = entry {
+        if e.name == ".." {
+            spans.push(Span::styled(
+                "Parent directory",
+                Style::default().fg(theme.muted),
+            ));
+        } else {
+            let entry_badge = if e.is_dir {
+                badge("DIR", Color::Black, theme.accent)
+            } else {
+                badge("FILE", Color::Black, theme.accent_alt)
+            };
+            spans.push(entry_badge);
+
+            if !e.is_dir {
+                spans.push(Span::raw(" "));
+                spans.push(Span::styled(
+                    format_size(e.size),
+                    Style::default().fg(theme.text),
+                ));
+            }
+
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(
+                format_time(e.modified),
+                Style::default().fg(theme.muted),
+            ));
+
+            let perm = if e.readonly { "RO" } else { "RW" };
+            spans.push(Span::raw("  "));
+            spans.push(badge(perm, Color::Black, theme.accent));
+
+            if e.is_hidden {
+                spans.push(Span::raw(" "));
+                spans.push(badge("hidden", Color::White, theme.muted));
+            }
         }
     } else {
-        "No file selected".to_string()
-    };
+        spans.push(Span::styled(
+            "No file selected",
+            Style::default().fg(theme.muted),
+        ));
+    }
 
-    Paragraph::new(content)
-        .style(Style::default().fg(Color::Gray))
-        .block(Block::default().borders(Borders::ALL).title("Info"))
+    Paragraph::new(Line::from(spans))
+        .style(Style::default().fg(theme.text))
+        .block(themed_block("Info", theme.accent))
 }
 
 // =============================================================================

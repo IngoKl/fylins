@@ -111,7 +111,9 @@ fn handle_normal_mode(app: &mut App, key: event::KeyEvent) -> bool {
         KeyCode::Up | KeyCode::Char('k') => app.move_up(),
         KeyCode::Down | KeyCode::Char('j') => app.move_down(),
         KeyCode::Enter | KeyCode::Right | KeyCode::Char('l') => {
-            let _ = app.enter_selected();
+            if let Err(err) = app.enter_selected() {
+                app.message = Some(format!("Cannot enter: {}", err));
+            }
         }
         KeyCode::Backspace | KeyCode::Left | KeyCode::Char('h') => {
             app.go_to_parent();

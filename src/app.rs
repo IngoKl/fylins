@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs,
-    io::{self, Read, Seek},
+    io::{self, ErrorKind, Read, Seek},
     path::{Component, Path, PathBuf},
     process::Command,
     time::SystemTime,
@@ -284,6 +284,24 @@ impl App {
         };
     }
 
+    fn navigate_to(&mut self, target: PathBuf) -> io::Result<()> {
+        let previous_dir = self.current_dir.clone();
+        let canonical = target.canonicalize()?;
+        self.current_dir = canonical;
+
+        if let Err(err) = self.refresh() {
+            self.current_dir = previous_dir;
+            return Err(err);
+        }
+
+        self.input.clear();
+        self.cursor = 0;
+        self.mode = Mode::Normal;
+        self.state.select(Some(0));
+        self.update_preview();
+        Ok(())
+    }
+
     fn load_directory_preview(&self, path: &Path) -> Preview {
         match fs::read_dir(path) {
             Ok(entries) => {
@@ -409,12 +427,7 @@ impl App {
                 } else {
                     self.current_dir.join(&entry.name)
                 };
-                self.current_dir = new_path.canonicalize()?;
-                self.input.clear();
-                self.mode = Mode::Normal;
-                self.refresh()?;
-                self.state.select(Some(0));
-                self.update_preview();
+                return self.navigate_to(new_path);
             }
         }
         Ok(())
@@ -448,24 +461,18 @@ impl App {
 
     pub fn go_to_parent(&mut self) {
         if let Some(parent) = self.current_dir.parent() {
-            self.current_dir = parent.to_path_buf();
-            self.input.clear();
-            self.mode = Mode::Normal;
-            let _ = self.refresh();
-            self.state.select(Some(0));
-            self.update_preview();
+            if let Err(err) = self.navigate_to(parent.to_path_buf()) {
+                self.message = Some(format!("Cannot open parent: {}", err));
+            }
         }
     }
 
     pub fn go_to_start(&mut self) {
         if self.current_dir != self.start_dir {
-            self.current_dir = self.start_dir.clone();
-            self.input.clear();
-            self.mode = Mode::Normal;
-            let _ = self.refresh();
-            self.state.select(Some(0));
-            self.update_preview();
-            self.message = Some("Back to start".to_string());
+            match self.navigate_to(self.start_dir.clone()) {
+                Ok(_) => self.message = Some("Back to start".to_string()),
+                Err(err) => self.message = Some(format!("Cannot open start: {}", err)),
+            }
         }
     }
 
@@ -697,20 +704,9 @@ impl App {
             path
         };
 
-        match target.canonicalize() {
-            Ok(canonical) => {
-                self.current_dir = canonical;
-                self.mode = Mode::Normal;
-                self.input.clear();
-                self.cursor = 0;
-                let _ = self.refresh();
-                self.state.select(Some(0));
-                self.update_preview();
-                self.message = None;
-            }
-            Err(e) => {
-                self.message = Some(format!("Cannot navigate: {}", e));
-            }
+        match self.navigate_to(target) {
+            Ok(_) => self.message = None,
+            Err(e) => self.message = Some(format!("Cannot navigate: {}", e)),
         }
     }
 
@@ -1001,7 +997,25 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> io::Result<()> {
         let entry = entry?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if src_path.is_dir() {
+        let metadata = fs::symlink_metadata(&src_path)?;
+
+        if metadata.file_type().is_symlink() {
+            let target_meta = fs::metadata(&src_path)?;
+            if target_meta.is_dir() {
+                return Err(io::Error::new(
+                    ErrorKind::Other,
+                    format!(
+                        "Refusing to copy symlinked directory: {}",
+                        src_path.display()
+                    ),
+                ));
+            }
+
+            fs::copy(&src_path, &dst_path)?;
+            continue;
+        }
+
+        if metadata.is_dir() {
             copy_dir_recursive(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
